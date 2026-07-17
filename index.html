@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>作文批改助手</title>
+  <!-- 用于解析 .docx 文件 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #f4f7f9;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+      width: 100%;
+      max-width: 800px;
+      padding: 40px 30px;
+    }
+    h1 {
+      text-align: center;
+      color: #2c3e50;
+      margin-bottom: 6px;
+      font-size: 1.8rem;
+    }
+    .subtitle {
+      text-align: center;
+      color: #7f8c8d;
+      margin-bottom: 30px;
+      font-size: 0.95rem;
+    }
+    .upload-area {
+      border: 2px dashed #bdc3c7;
+      border-radius: 12px;
+      padding: 30px;
+      text-align: center;
+      background: #fafbfc;
+      margin-bottom: 20px;
+      transition: border-color 0.3s;
+    }
+    .upload-area:hover { border-color: #3498db; }
+    .upload-area.dragover {
+      border-color: #2ecc71;
+      background: #eefaf3;
+    }
+    #fileInput { display: none; }
+    .file-label {
+      background: #3498db;
+      color: white;
+      padding: 12px 28px;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      display: inline-block;
+      transition: background 0.2s;
+    }
+    .file-label:hover { background: #2980b9; }
+    .file-name {
+      margin-top: 12px;
+      color: #555;
+      font-size: 0.9rem;
+    }
+    .text-input-section {
+      margin-bottom: 20px;
+    }
+    textarea {
+      width: 100%;
+      height: 200px;
+      border: 1px solid #dcdfe6;
+      border-radius: 10px;
+      padding: 15px;
+      font-size: 0.95rem;
+      resize: vertical;
+      outline: none;
+      background: #fafbfc;
+      transition: border-color 0.2s;
+    }
+    textarea:focus { border-color: #3498db; }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      background: #27ae60;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 1.1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-bottom: 20px;
+    }
+    .btn:disabled { background: #95a5a6; cursor: not-allowed; }
+    .btn:hover:not(:disabled) { background: #219a52; }
+    .result-box {
+      background: #f8fafb;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 25px;
+      white-space: pre-wrap;
+      line-height: 1.7;
+      font-size: 0.95rem;
+      color: #2c3e50;
+      display: none;
+    }
+    .result-box.show { display: block; }
+    .error {
+      color: #e74c3c;
+      background: #fdf0ef;
+      border: 1px solid #f5c6cb;
+      border-radius: 8px;
+      padding: 15px;
+      margin-top: 15px;
+      display: none;
+    }
+    .error.show { display: block; }
+    .loading {
+      text-align: center;
+      color: #7f8c8d;
+      margin-top: 20px;
+      display: none;
+    }
+    .loading.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📝 作文批改助手</h1>
+    <p class="subtitle">上传作文文件（.txt 或 .docx）或直接粘贴文本</p>
+
+    <!-- 文件上传 -->
+    <div class="upload-area" id="dropZone">
+      <input type="file" id="fileInput" accept=".txt,.docx">
+      <label for="fileInput" class="file-label">📎 选择作文文件</label>
+      <p class="file-name" id="fileName"></p>
+      <small style="color:#888;">或拖拽文件到此处</small>
+    </div>
+
+    <!-- 文本输入 -->
+    <div class="text-input-section">
+      <textarea id="essayText" placeholder="也可以在这里直接粘贴作文内容..."></textarea>
+    </div>
+
+    <button class="btn" id="submitBtn">🔍 开始批改</button>
+
+    <div class="loading" id="loading">⏳ AI 正在批改中，请稍候...</div>
+    <div class="result-box" id="resultBox"></div>
+    <div class="error" id="errorBox"></div>
+  </div>
+
+  <script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileNameDisplay = document.getElementById('fileName');
+    const essayText = document.getElementById('essayText');
+    const submitBtn = document.getElementById('submitBtn');
+    const loading = document.getElementById('loading');
+    const resultBox = document.getElementById('resultBox');
+    const errorBox = document.getElementById('errorBox');
+
+    let fileContentPromise = null;
+
+    // 文件拖拽/选择处理
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('dragover');
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const files = e.dataTransfer.files;
+      if (files.length) handleFile(files[0]);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length) handleFile(e.target.files[0]);
+    });
+
+    function handleFile(file) {
+      fileNameDisplay.textContent = `已选择: ${file.name}`;
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (ext === 'txt') {
+        fileContentPromise = file.text();
+      } else if (ext === 'docx') {
+        fileContentPromise = file.arrayBuffer().then(buffer =>
+          mammoth.extractRawText({ arrayBuffer: buffer })
+            .then(result => result.value)
+        );
+      } else {
+        showError('不支持的文件格式，请上传 .txt 或 .docx 文件');
+        fileContentPromise = null;
+        fileNameDisplay.textContent = '';
+        fileInput.value = '';
+      }
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.add('show');
+      resultBox.classList.remove('show');
+      loading.classList.remove('show');
+    }
+
+    function hideMessages() {
+      errorBox.classList.remove('show');
+      resultBox.classList.remove('show');
+      loading.classList.remove('show');
+    }
+
+    submitBtn.addEventListener('click', async () => {
+      hideMessages();
+      let text = essayText.value.trim();
+
+      // 如果文本区域为空，尝试从文件获取
+      if (!text && fileContentPromise) {
+        try {
+          text = await fileContentPromise;
+        } catch (err) {
+          showError('文件读取失败，请重试');
+          return;
+        }
+      }
+
+      if (!text) {
+        showError('请粘贴作文内容或上传文件');
+        return;
+      }
+
+      // 调用 Netlify 函数
+      submitBtn.disabled = true;
+      loading.classList.add('show');
+      try {
+        const response = await fetch('/.netlify/functions/review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ essay: text })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `服务器错误 (${response.status})`);
+        }
+
+        const data = await response.json();
+        resultBox.textContent = data.review;
+        resultBox.classList.add('show');
+      } catch (err) {
+        showError(`批改失败: ${err.message}`);
+      } finally {
+        submitBtn.disabled = false;
+        loading.classList.remove('show');
+      }
+    });
+  </script>
+</body>
+</html>
